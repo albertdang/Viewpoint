@@ -20,9 +20,10 @@ class Viewpoint::EWSClient
   include Viewpoint::EWS::RoomAccessors
   include Viewpoint::EWS::RoomlistAccessors
   include Viewpoint::EWS::ConvertAccessors
+  include Viewpoint::StringUtils
 
   # The instance of Viewpoint::EWS::SOAP::ExchangeWebService
-  attr_reader :ews
+  attr_reader :ews, :endpoint, :username
 
   # Initialize the EWSClient instance.
   # @param [String] endpoint The EWS endpoint we will be connecting to
@@ -36,13 +37,15 @@ class Viewpoint::EWSClient
   #   Viewpoint::EWS::SOAP::ExchangeWebService.
   # @option opts [Object] :http_class specify an alternate HTTP connection class.
   # @option opts [Hash] :http_opts options to pass to the connection
-  def initialize(endpoint, user = nil, pass = nil, opts = {})
+  def initialize(endpoint, username, password, opts = {})
     # dup all. @see ticket https://github.com/zenchild/Viewpoint/issues/68
-    endpoint, user, pass = endpoint.dup, user.dup, pass.dup
-    opts = opts.dup
+    @endpoint = endpoint.dup
+    @username = username.dup
+    password  = password.dup
+    opts      = opts.dup
     http_klass = opts[:http_class] || Viewpoint::EWS::Connection
     con = http_klass.new(endpoint, opts[:http_opts] || {})
-    con.set_auth(user,pass) if(user && pass)
+    con.set_auth @username, password
     @ews = SOAP::ExchangeWebService.new(con, opts)
   end
 
@@ -52,11 +55,11 @@ class Viewpoint::EWSClient
   #   default is to raise a EwsMinimalObjectError.
   def set_auto_deepen(deepen, behavior = :raise)
     if deepen
-      @ews.auto_deepen = true
+      ews.auto_deepen = true
     else
       behavior = [:raise, :nil].include?(behavior) ? behavior : :raise
-      @ews.no_auto_deepen_behavior = behavior
-      @ews.auto_deepen = false
+      ews.no_auto_deepen_behavior = behavior
+      ews.auto_deepen = false
     end
   end
 
@@ -68,7 +71,7 @@ class Viewpoint::EWSClient
   # @param id [String] Identifier of a Microsoft well known time zone (e.g: 'UTC', 'W. Europe Standard Time')
   # @note A list of time zones known by the server can be requested via {EWS::SOAP::ExchangeTimeZones#get_time_zones}
   def set_time_zone(microsoft_time_zone_id)
-    @ews.set_time_zone_context microsoft_time_zone_id
+    ews.set_time_zone_context microsoft_time_zone_id
   end
 
   private
@@ -78,7 +81,7 @@ class Viewpoint::EWSClient
   # in there that I didn't want to include directly in this class.
   def class_by_name(cname)
     if(cname.instance_of? Symbol)
-      cname = cname.to_s.camel_case
+      cname = camel_case(cname)
     end
     Viewpoint::EWS::Types.const_get(cname)
   end

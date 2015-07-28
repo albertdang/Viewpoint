@@ -26,10 +26,12 @@ module Viewpoint::EWS
 
       # EWS CreateItem container
       # @return [Hash]
-      def to_ews_create
+      def to_ews_create(opts = {})
         structure = {}
         structure[:message_disposition] = (draft ? 'SaveOnly' : 'SendAndSaveCopy')
-        structure[:send_meeting_invitations] = 'SendToAllAndSaveCopy'
+        #structure[:send_meeting_invitations] = 'SendToAllAndSaveCopy'
+        # options
+        structure[:send_meeting_invitations] = (opts.has_key?(:send_meeting_invitations) ? opts[:send_meeting_invitations] : 'SendToNone')
 
         if self.saved_item_folder_id
           if self.saved_item_folder_id.kind_of?(Hash)
@@ -50,7 +52,7 @@ module Viewpoint::EWS
       def to_ews_item
         item_parameters = {}
         PARAMETERS.each do |key|
-          if !(value = self[key]).nil?
+          if !(value = self.send(key)).nil?
 
             # Convert non duplicable values to String
             case value

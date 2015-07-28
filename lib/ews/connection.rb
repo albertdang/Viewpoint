@@ -25,13 +25,24 @@ class Viewpoint::EWS::Connection
   # @param [String] endpoint the URL of the web service.
   #   @example https://<site>/ews/Exchange.asmx
   # @param [Hash] opts Misc config options (mostly for developement)
-  # @option opts [Fixnum] ssl_verify_mode
+  # @option opts [Fixnum] :ssl_verify_mode
+  # @option opts [Fixnum] :receive_timeout override the default receive timeout
+  #   seconds
+  # @option opts [Array]  :trust_ca an array of hashed dir paths or a file
   def initialize(endpoint, opts = {})
     @log = Logging.logger[self.class.name.to_s.to_sym]
     @httpcli = HTTPClient.new
+    if opts[:trust_ca]
+      @httpcli.ssl_config.clear_cert_store
+      opts[:trust_ca].each do |ca|
+        @httpcli.ssl_config.add_trust_ca ca
+      end
+    end
     @httpcli.ssl_config.verify_mode = opts[:ssl_verify_mode] if opts[:ssl_verify_mode]
+    @httpcli.ssl_config.ssl_version = opts[:ssl_version] if opts[:ssl_version]
     # Up the keep-alive so we don't have to do the NTLM dance as often.
     @httpcli.keep_alive_timeout = 60
+    @httpcli.receive_timeout = opts[:receive_timeout] if opts[:receive_timeout]
     @endpoint = endpoint
   end
 
@@ -91,16 +102,18 @@ class Viewpoint::EWS::Connection
       resp.body
     when 302
       # @todo redirect
-      raise "Unhandled HTTP Redirect"
+      raise Errors::UnhandledResponseError.new("Unhandled HTTP Redirect", resp)
+    when 401
+      raise Errors::UnauthorizedResponseError.new("Unauthorized request", resp)
     when 500
-      if resp.headers['Content-Type'].include?('xml')
+      if resp.headers['Content-Type'] =~ /xml/
         err_string, err_code = parse_soap_error(resp.body)
-        raise "SOAP Error: Message: #{err_string}  Code: #{err_code}"
+        raise Errors::SoapResponseError.new("SOAP Error: Message: #{err_string}  Code: #{err_code}", resp, err_code, err_string)
       else
-        raise "Internal Server Error. Message: #{resp.body}"
+        raise Errors::ServerError.new("Internal Server Error. Message: #{resp.body}", resp)
       end
     else
-      raise "HTTP Error Code: #{resp.status}, Msg: #{resp.body}"
+      raise Errors::ResponseError.new("HTTP Error Code: #{resp.status}, Msg: #{resp.body}", resp)
     end
   end
 

@@ -24,6 +24,7 @@ module Viewpoint::EWS::Types
       size:           [:size, :text],
       date_time_sent: [:date_time_sent, :text],
       date_time_created: [:date_time_created, :text],
+      last_modified_time: [:last_modified_time, :text],
       mime_content: [:mime_content, :text],
       has_attachments?:[:has_attachments, :text],
       is_associated?: [:is_associated, :text],
@@ -50,6 +51,7 @@ module Viewpoint::EWS::Types
       size:               ->(str){str.to_i},
       date_time_sent:     ->(str){DateTime.parse(str)},
       date_time_created:  ->(str){DateTime.parse(str)},
+      last_modified_time: ->(str){DateTime.parse(str)},
       has_attachments?:   ->(str){str.downcase == 'true'},
       is_associated?:     ->(str){str.downcase == 'true'},
       is_read?:           ->(str){str.downcase == 'true'},
@@ -85,6 +87,7 @@ module Viewpoint::EWS::Types
       simplify!
       @new_file_attachments = []
       @new_item_attachments = []
+      @new_inline_attachments = []
     end
 
     # Specify a body_type to fetch this item with if it hasn't already been fetched.
@@ -94,11 +97,12 @@ module Viewpoint::EWS::Types
       @body_type = body_type
     end
 
-    def delete!(deltype = :hard)
+    def delete!(deltype = :hard, opts = {})
       opts = {
         :delete_type => delete_type(deltype),
         :item_ids => [{:item_id => {:id => id}}]
-      }
+      }.merge(opts)
+
       resp = @ews.delete_item(opts)
       rmsg = resp.response_messages[0]
       unless rmsg.success?
@@ -116,10 +120,14 @@ module Viewpoint::EWS::Types
       simplify!
     end
 
-    # Mark an item as read or if you pass false, unread
-    # @param [Boolean] read mark read if true, unread if not.
-    def mark_read!(read = true)
-      resp = update_is_read_status read
+    # Mark an item as read
+    def mark_read!
+      update_is_read_status true
+    end
+
+    # Mark an item as unread
+    def mark_unread!
+      update_is_read_status false
     end
 
     # Move this item to a new folder
@@ -180,6 +188,13 @@ module Viewpoint::EWS::Types
       @new_item_attachments << ia
     end
 
+    def add_inline_attachment(file)
+      fi = OpenStruct.new
+      fi.name     = File.basename(file.path)
+      fi.content  = Base64.encode64(file.read)
+      @new_inline_attachments << fi
+    end
+
     def submit!
       if draft?
         submit_attachments!
@@ -196,17 +211,19 @@ module Viewpoint::EWS::Types
     end
 
     def submit_attachments!
-      return false unless draft? && !(@new_file_attachments.empty? && @new_item_attachments.empty?)
+      return false unless draft? && !(@new_file_attachments.empty? && @new_item_attachments.empty? && @new_inline_attachments.empty?)
 
       opts = {
         parent_id: {id: self.id, change_key: self.change_key},
         files: @new_file_attachments,
-        items: @new_item_attachments
+        items: @new_item_attachments,
+        inline_files: @new_inline_attachments
       }
       resp = ews.create_attachment(opts)
       set_change_key resp.response_messages[0].attachments[0].parent_change_key
       @new_file_attachments = []
       @new_item_attachments = []
+      @new_inline_attachments = []
     end
 
     # If you want to add to the body set #new_body_content. If you set #body
@@ -335,15 +352,43 @@ module Viewpoint::EWS::Types
       end
     end
 
+    def build_deleted_occurrences(occurrences)
+      occurrences.collect{|a| DateTime.parse a[:deleted_occurrence][:elems][0][:start][:text]}
+    end
+
+    def build_modified_occurrences(occurrences)
+      {}.tap do |h|
+        occurrences.collect do |a|
+          elems = a[:occurrence][:elems]
+
+          h[DateTime.parse(elems.find{|e| e[:original_start]}[:original_start][:text])] = {
+            start: elems.find{|e| e[:start]}[:start][:text],
+            end: elems.find{|e| e[:end]}[:end][:text]
+          }
+        end
+      end
+    end
+
     def build_mailbox_user(mbox_ews)
       MailboxUser.new(ews, mbox_ews)
     end
 
     def build_mailbox_users(users)
+      return [] if users.nil?
       users.collect{|u| build_mailbox_user(u[:mailbox][:elems])}
     end
 
+    def build_attendees_users(users)
+      return [] if users.nil?
+      users.collect do |u|
+        u[:attendee][:elems].collect do |a|
+          build_mailbox_user(a[:mailbox][:elems]) if a[:mailbox]
+        end
+      end.flatten.compact
+    end
+
     def build_attachments(attachments)
+      return [] if attachments.nil?
       attachments.collect do |att|
         key = att.keys.first
         class_by_name(key).new(self, att[key])
