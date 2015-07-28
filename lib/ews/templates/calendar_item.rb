@@ -29,7 +29,6 @@ module Viewpoint::EWS
       def to_ews_create(opts = {})
         structure = {}
         structure[:message_disposition] = (draft ? 'SaveOnly' : 'SendAndSaveCopy')
-        #structure[:send_meeting_invitations] = 'SendToAllAndSaveCopy'
         # options
         structure[:send_meeting_invitations] = (opts.has_key?(:send_meeting_invitations) ? opts[:send_meeting_invitations] : 'SendToNone')
 
